@@ -47,6 +47,19 @@ FILE_PREFIXES = {
 
 RESULTS_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Results")
 
+# ---------------------------------------------------------------------------
+# CLI colour settings
+# Set an ANSI colour code for each sentinel value; use "" to disable.
+# Common codes: 31=red  32=green  33=yellow  34=blue  35=magenta  36=cyan
+# ---------------------------------------------------------------------------
+
+COLOUR_NA          = "\033[31m"   # red     – no file found for ticker
+COLOUR_UNKNOWN     = "\033[33m"   # yellow  – file exists but no currency field
+COLOUR_FILE_ERROR  = "\033[35m"   # magenta – could not read / parse the file
+COLOUR_FOLDER_MISS = "\033[35m"   # magenta – data folder not present
+COLOUR_USD_MIXED   = "\033[34m"   # blue    – USD in a fundamental column when ticker has non-USD elsewhere
+COLOUR_RESET       = "\033[0m"
+
 # Sentinel values (never written as real currency codes in output)
 NA          = "N/A"           # no file found for ticker
 UNKNOWN     = "UNKNOWN"       # file exists but no currency field found
@@ -346,6 +359,35 @@ def main() -> None:
                       for fn in FOLDERS)]
     all_usd = [t for t in tickers_sorted if t not in non_usd]
 
+    # Enable ANSI colour support on Windows
+    if os.name == "nt":
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleMode(
+            ctypes.windll.kernel32.GetStdHandle(-11), 7
+        )
+
+    _COLOUR_MAP = {
+        NA:          COLOUR_NA,
+        UNKNOWN:     COLOUR_UNKNOWN,
+        FILE_ERROR:  COLOUR_FILE_ERROR,
+        FOLDER_MISS: COLOUR_FOLDER_MISS,
+    }
+
+    def colorize(value: str, col_idx: int = 0) -> str:
+        colour = _COLOUR_MAP.get(value, "")
+        return f"{colour}{value}{COLOUR_RESET}" if colour else value
+
+    # row layout: [#, Ticker, CompanyInfo, FundBS, FundCF, FundIS]
+    # Fundamental folder columns start at index 3 (after #, Ticker, CompanyInfo).
+    FUND_COL_START = 3
+
+    def colorize_mixed(value: str, col_idx: int) -> str:
+        """Colorize for Table 1: also blue for USD in fundamental columns."""
+        if col_idx >= FUND_COL_START and value == "USD" and COLOUR_USD_MIXED:
+            return f"{COLOUR_USD_MIXED}{value}{COLOUR_RESET}"
+        colour = _COLOUR_MAP.get(value, "")
+        return f"{colour}{value}{COLOUR_RESET}" if colour else value
+
     short_headers = ["CompanyInfo", "FundBS", "FundCF", "FundIS"]
     col_headers = ["#", "Ticker"] + short_headers
 
@@ -358,10 +400,18 @@ def main() -> None:
                 widths[i] = max(widths[i], len(results[ticker].get(fn, NA)))
         return widths
 
-    def fmt_row(cells, widths):
-        return "  ".join(c.ljust(widths[i]) for i, c in enumerate(cells))
+    def fmt_row(cells, widths, colorize_fn=None):
+        parts = []
+        for i, c in enumerate(cells):
+            padded = c.ljust(widths[i])
+            if colorize_fn and i > 1:
+                coloured = colorize_fn(c.rstrip(), i)
+                parts.append(coloured + " " * (widths[i] - len(c.rstrip())))
+            else:
+                parts.append(padded)
+        return "  ".join(parts)
 
-    def print_table(title, ticker_list):
+    def print_table(title, ticker_list, colorize_fn=colorize):
         widths = calc_widths(ticker_list)
         sep = "  ".join("-" * w for w in widths)
         print(f"\n{title}  ({len(ticker_list)} tickers)")
@@ -369,11 +419,11 @@ def main() -> None:
         print(sep)
         for i, ticker in enumerate(ticker_list, start=1):
             row = [str(i), ticker] + [results[ticker].get(fn, NA) for fn in FOLDERS]
-            print(fmt_row(row, widths))
+            print(fmt_row(row, widths, colorize_fn=colorize_fn))
 
     print(f"\nCurrencies found : {', '.join(all_currencies_sorted) if all_currencies_sorted else '(none)'}")
-    print_table("TABLE 1 – Non-USD currencies", non_usd)
-    print_table("TABLE 2 – USD everywhere", all_usd)
+    print_table("TABLE 1 – Non-USD currencies", non_usd, colorize_fn=colorize_mixed)
+    print_table("TABLE 2 – USD everywhere", all_usd, colorize_fn=colorize)
     print(f"\nResults written to:\n  {output_path}")
 
 
