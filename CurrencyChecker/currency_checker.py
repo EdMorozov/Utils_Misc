@@ -117,6 +117,22 @@ def _probe_dict(record: dict, fields: list[str]) -> str | None:
     return None
 
 
+def extract_is_adr(filepath: str) -> str:
+    """Return 'Yes', 'No', or a sentinel string based on the isAdr field in a CompanyInfo file."""
+    try:
+        with open(filepath, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return FILE_ERROR
+    record = data[0] if isinstance(data, list) and data else data if isinstance(data, dict) else None
+    if not isinstance(record, dict):
+        return UNKNOWN
+    val = record.get("isAdr")
+    if val is None:
+        return UNKNOWN
+    return "Yes" if val else "No"
+
+
 def extract_currency(filepath: str, folder_name: str) -> str:
     """
     Open *filepath*, walk the JSON structure, and return the currency string.
@@ -253,6 +269,7 @@ def main() -> None:
     # Step 3 – for every ticker, look up currency from each folder index
     # ------------------------------------------------------------------
     results: dict[str, dict[str, str]] = {}
+    is_adr: dict[str, str] = {}
     total = len(tickers_sorted)
     bar_width = 40
 
@@ -272,6 +289,10 @@ def main() -> None:
             recent = most_recent_file(matched)
             currency = extract_currency(recent, folder_name)
             results[ticker][folder_name] = currency
+
+            # Read isAdr from CompanyInfo
+            if folder_name == "CompanyInfo" and ticker not in is_adr:
+                is_adr[ticker] = extract_is_adr(recent)
 
         pct = idx / total
         filled = int(bar_width * pct)
@@ -334,9 +355,9 @@ def main() -> None:
         writer.writerow(["=== TABLE 1: TICKERS WITH NON-USD CURRENCIES ==="])
         writer.writerow([f"({len(non_usd)} tickers)"])
         writer.writerow([])
-        writer.writerow(["#", "Ticker"] + FOLDERS)
+        writer.writerow(["#", "Ticker", "IsADR"] + FOLDERS)
         for i, ticker in enumerate(non_usd, start=1):
-            row = [i, ticker] + [results[ticker].get(fn, NA) for fn in FOLDERS]
+            row = [i, ticker, is_adr.get(ticker, NA)] + [results[ticker].get(fn, NA) for fn in FOLDERS]
             writer.writerow(row)
         writer.writerow([])
         writer.writerow([])
@@ -345,9 +366,9 @@ def main() -> None:
         writer.writerow(["=== TABLE 2: TICKERS WITH USD IN ALL FOLDERS ==="])
         writer.writerow([f"({len(all_usd)} tickers)"])
         writer.writerow([])
-        writer.writerow(["#", "Ticker"] + FOLDERS)
+        writer.writerow(["#", "Ticker", "IsADR"] + FOLDERS)
         for i, ticker in enumerate(all_usd, start=1):
-            row = [i, ticker] + [results[ticker].get(fn, NA) for fn in FOLDERS]
+            row = [i, ticker, is_adr.get(ticker, NA)] + [results[ticker].get(fn, NA) for fn in FOLDERS]
             writer.writerow(row)
 
     # ------------------------------------------------------------------
@@ -377,9 +398,9 @@ def main() -> None:
         colour = _COLOUR_MAP.get(value, "")
         return f"{colour}{value}{COLOUR_RESET}" if colour else value
 
-    # row layout: [#, Ticker, CompanyInfo, FundBS, FundCF, FundIS]
-    # Fundamental folder columns start at index 3 (after #, Ticker, CompanyInfo).
-    FUND_COL_START = 3
+    # row layout: [#, Ticker, IsADR, CompanyInfo, FundBS, FundCF, FundIS]
+    # Fundamental folder columns start at index 4 (after #, Ticker, IsADR, CompanyInfo).
+    FUND_COL_START = 4
 
     def colorize_mixed(value: str, col_idx: int) -> str:
         """Colorize for Table 1: also blue for USD in fundamental columns."""
@@ -388,7 +409,7 @@ def main() -> None:
         colour = _COLOUR_MAP.get(value, "")
         return f"{colour}{value}{COLOUR_RESET}" if colour else value
 
-    short_headers = ["CompanyInfo", "FundBS", "FundCF", "FundIS"]
+    short_headers = ["IsADR", "CompanyInfo", "FundBS", "FundCF", "FundIS"]
     col_headers = ["#", "Ticker"] + short_headers
 
     def calc_widths(ticker_list):
@@ -396,7 +417,8 @@ def main() -> None:
         widths = [max(len("#"), num_w)] + [len(h) for h in ["Ticker"] + short_headers]
         for ticker in ticker_list:
             widths[1] = max(widths[1], len(ticker))
-            for i, fn in enumerate(FOLDERS, start=2):
+            widths[2] = max(widths[2], len(is_adr.get(ticker, NA)))
+            for i, fn in enumerate(FOLDERS, start=3):
                 widths[i] = max(widths[i], len(results[ticker].get(fn, NA)))
         return widths
 
@@ -418,7 +440,7 @@ def main() -> None:
         print(fmt_row(col_headers, widths))
         print(sep)
         for i, ticker in enumerate(ticker_list, start=1):
-            row = [str(i), ticker] + [results[ticker].get(fn, NA) for fn in FOLDERS]
+            row = [str(i), ticker, is_adr.get(ticker, NA)] + [results[ticker].get(fn, NA) for fn in FOLDERS]
             print(fmt_row(row, widths, colorize_fn=colorize_fn))
 
     print(f"\nCurrencies found : {', '.join(all_currencies_sorted) if all_currencies_sorted else '(none)'}")
