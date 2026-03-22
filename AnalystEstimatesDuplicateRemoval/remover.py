@@ -1,3 +1,22 @@
+# Analyst Estimates Duplicate Remover
+#
+# Scans all JSON files in the Before directory and copies only the EARLIEST file for each unique set of analyst estimate data into the After directory, discarding any later files whose content is identical to one already seen.
+#
+# How it works:
+#   1. Every JSON file whose name matches the pattern AnalystEstimates_{symbol}_{YYYY.MM.DD}_{HH.MM.SS.mmm}_{suffix}.json is discovered in the Before directory.
+#
+#   2. Files are grouped by (symbol + suffix), e.g. "A_q" or "A_a", so that different file types for the same ticker are treated independently.
+#
+#   3. Within each group the files are sorted chronologically, oldest first.
+#
+#   4. Each file's JSON is loaded and a SHA-256 hash of its canonicalized content (keys sorted, whitespace normalized) is computed. This ensures that two files
+#      with identical data but different formatting are still detected as equal.
+#
+#   5. If the hash has not been seen before in the group, the file is NEW — it is copied to the After directory and its hash is remembered. 
+#      If the hash was already seen, the file is a DUPLICATE — it is skipped.
+#
+# Result: After contains only the earliest snapshot for every distinct set of analyst estimates, with all unchanged follow-up files removed.
+
 import hashlib
 import json
 import re
